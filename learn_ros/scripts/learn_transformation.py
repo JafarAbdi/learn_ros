@@ -1,8 +1,10 @@
+#!/usr/bin/env python
 import rospy
 import tf
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, Transform
 import numpy as np
+from markdown.util import int2str
 
 def message_from_transform(T):
     msg = Transform()
@@ -19,28 +21,37 @@ def message_from_transform(T):
 
 rospy.init_node("trans")
 rate = rospy.Rate(10)
-trans = TransformStamped()
 bc = tf2_ros.TransformBroadcaster()
 
-once = 1
 while not rospy.is_shutdown():
     
-    trans.header.frame_id = "world"
-    trans.child_frame_id = "dist" 
-    trans.header.stamp = rospy.Time.now()
+    transforms = []
+    T1 = tf.transformations.rotation_matrix(np.pi/4, [0, 0, 1])
+    T2 = tf.transformations.translation_matrix([0, 1, 0])
+    T3 = tf.transformations.rotation_matrix(np.pi/2, [0, 0, 1])
+    T4 = tf.transformations.rotation_matrix(np.pi/2, [0, 1, 0])
+    T5 = tf.transformations.translation_matrix([1, 0, 0])
+    #T6 = tf.transformations.rotation_matrix(np.pi/2, [0, 1, 0])
     
-    z_angle = np.pi/2
-    y_angle = np.pi/2
-    Rz = tf.transformations.rotation_matrix(z_angle, [0, 0, 1])
-    Ry = tf.transformations.rotation_matrix(y_angle, [0, 1, 0])
-    translation = tf.transformations.translation_matrix([1, 0, 0])
-    ht = tf.transformations.concatenate_matrices(translation, Ry, Rz)
-    if once == 1:
-        print(np.round(ht,2))
-        print(np.round(Rz,2))
-        print(np.round(Ry,2))
-        once += 1
-    trans.transform = message_from_transform(ht)
-    bc.sendTransform(trans)
+    for i in range(5):
+         trans = TransformStamped()
+         trans.header.frame_id = str(0)
+         trans.child_frame_id = str(i + 1)
+         trans.header.stamp = rospy.Time.now()
+         transforms.append(trans)
+    # the summary is when you want to rotate around the fixed frame you pre-multiply 
+    # and when you want to rotate around the current frame you post-multiply
+    T = T1
+    transforms[0].transform = message_from_transform(T)
+    T = np.dot(T, T2)
+    transforms[1].transform = message_from_transform(T)
+    T = np.dot(T3, T)
+    transforms[2].transform = message_from_transform(T)
+    T = np.dot(T4, T)
+    transforms[3].transform = message_from_transform(T)
+    T = np.dot(T, T5)
+    transforms[4].transform = message_from_transform(T)
+    
+    bc.sendTransform(transforms)
     
     rate.sleep()
