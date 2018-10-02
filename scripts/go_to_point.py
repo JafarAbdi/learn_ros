@@ -13,21 +13,17 @@ class Go_To_Point:
     odom_topic  = "/robot0/odom"
     twist_topic = "/robot0/cmd_vel"
     pt_topic    = "/robot0/pt_d" # Desired point
-    #vel_topic   = "/robot0/vel_d"
-    #vel = 0 # linear velocity
+    
     th  = 0
     pose= np.array([0., 0.]) # [x, y]
     def __init__(self):
-        #rospy.Subscriber(  self.vel_topic,  Float32,   self.vel_cb)
         rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb)
-        #rospy.Subscriber(self.pt_topic  ,   Pose2D, self.pt_cb  )
         
         self.TwistPub = rospy.Publisher(self.twist_topic, Twist, queue_size=10)
         self.ServerGTP = actionlib.SimpleActionServer('go_to_point', GoToPointAction, self.pt_cb, False)
         self.ServerGTP.start()
         rospy.loginfo("Go To Point Controller Initialized")
-    #def vel_cb(self, msg):
-    #    self.vel = msg.data
+
     def odom_cb(self, msg):
         self.th = trans.euler_from_quaternion([msg.pose.pose.orientation.x, 
                                                msg.pose.pose.orientation.y, 
@@ -65,13 +61,11 @@ class Go_To_Point:
             d    = np.linalg.norm(pose_to_d)
             if d < eps:
                 self.go_to_angle(th)
-                #break 
-                return
+                break 
             ang_vel = th_kp * th_e + th_kd * e_dd + th_ki * TH_d
             ang_vel = np.clip(ang_vel, -1.4, 1.4)
             lin_vel = d_kp * d
             lin_vel = np.clip(lin_vel, .025, 0.25)
-            #print(th_e, e_dd, TH_d, lin_vel)
             twist_msg.angular.z = ang_vel
             twist_msg.linear.x  = lin_vel
             self.TwistPub.publish(twist_msg)
@@ -82,19 +76,17 @@ class Go_To_Point:
         self.TwistPub.publish(twist_msg)
     
     def go_to_angle(self, th_d, kp=1.5, eps=0.01):
-        #rospy.loginfo("Received New Desired Angle %d", th_d)
         rate = rospy.Rate(100)
         twist_msg = Twist()
         while True:
             if self.ServerGTP.is_preempt_requested():
                 self.ServerGTP.set_preempted()
-                return
+                break
             th_e = th_d - self.th
             if abs(th_e) < eps:
                 self.ServerGTP.set_succeeded()
                 break 
             twist_msg.angular.z = kp * th_e
-            #twist_msg.linear.x  = self.vel
             self.TwistPub.publish(twist_msg)
             rate.sleep()
             
