@@ -1,22 +1,19 @@
 #!/usr/bin/env python
 
-from nav_msgs.msg import Odometry, OccupancyGrid
+from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, Point
 from std_msgs.msg import Float32
 from sensor_msgs.msg import LaserScan, Range
 from numpy import sin, cos, pi
 from numpy.linalg import norm
 
-import matplotlib.pyplot as plt
 import transformations as tf
 import numpy as np
 
 import matplotlib
 import rospy
-import pcl
 
 from __future__ import print_function
-from sphinx.ext import todo
 
 
 class TangentBug:
@@ -53,9 +50,7 @@ class TangentBug:
         self.angle_max = self.last_ls_msg.angle_max
         self.angle_inc = self.last_ls_msg.angle_increment
         self.range_max = self.last_ls_msg.range_max
-        self.goal = np.array([5., 
-                              5.])
-        #np.arange(self.angle_min, self.angle_max + self.angle_inc, self.angle_inc)
+        self.goal = np.copy(self.q)
         self.angles    = np.linspace(self.angle_min, self.angle_max, 667) # the "667" from robot specification
         
         # Publishers
@@ -65,6 +60,7 @@ class TangentBug:
         
         
         rospy.loginfo("Tangent Bug Initialized")
+        
     # LaserScan Callback
     def lsCB(self, msg):
         """
@@ -151,7 +147,7 @@ class TangentBug:
         @rtype  numpy.array (# endpoints, 2)
         """
         Z = self.laserscan_to_numpy(self.last_ls_msg)
-        Z[Z == np.inf] = 100 # any big number that is bigger than self.range_max
+        Z[Z == np.inf] = 100 # Could be any number which is bigger than self.range_max
         Oindx = np.where(np.abs(np.diff(Z)) > 0.3)[0] # Z[n + 1] - Z[n]
         Os     = []
         Angles = []
@@ -296,7 +292,6 @@ class TangentBug:
     def impl(self):
         rate = rospy.Rate(50)
         while True:
-
             th_d_msg = Float32()
             vel_d_msg = Float32()
             goal = np.copy(self.goal)
