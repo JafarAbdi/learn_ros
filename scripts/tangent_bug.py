@@ -6,12 +6,14 @@ from std_msgs.msg import Float32
 from sensor_msgs.msg import LaserScan, Range
 from numpy import sin, cos, pi
 from numpy.linalg import norm
+from learn_ros.msg import GoToPointAction, GoToPointGoal 
 
 import transformations as tf
 import numpy as np
 
 import matplotlib
 import rospy
+import actionlib
 
 from __future__ import print_function
 
@@ -53,11 +55,9 @@ class TangentBug:
         self.goal = np.copy(self.q)
         self.angles    = np.linspace(self.angle_min, self.angle_max, 667) # the "667" from robot specification
         
-        # Publishers
-        self.DThPub  = rospy.Publisher("/robot0/theta_d", Float32, queue_size=10)
-        self.VelPub  = rospy.Publisher("/robot0/cmd_vel", Twist, queue_size=10)
-        self.DVelPub = rospy.Publisher("/robot0/vel_d", Float32, queue_size=10)
-        
+        # Action Client
+        self.ClientGTP = actionlib.SimpleActionClient('go_to_point', GoToPointAction)
+        self.ClientGTP.wait_for_server()
         
         rospy.loginfo("Tangent Bug Initialized")
         
@@ -292,8 +292,7 @@ class TangentBug:
     def impl(self):
         rate = rospy.Rate(50)
         while True:
-            th_d_msg = Float32()
-            vel_d_msg = Float32()
+            action_goal = GoToPointGoal()
             goal = np.copy(self.goal)
             q    = np.copy(self.q)
             T  = self.get_heading_pt(T_inf=False)
@@ -304,10 +303,10 @@ class TangentBug:
             T_Oi = self.conca_pts(Oi, T)
             head_pt = self.get_pt_minimize(T_Oi)
             th_d = self.get_abs_angle_to_pt(head_pt)
-            th_d_msg.data = th_d
-            vel_d_msg.data = 0.05 * norm(goal - q)
-            self.DThPub.publish(th_d_msg)
-            self.DVelPub.publish(vel_d_msg)
+            action_goal.heading_pt.x     = head_pt[0]
+            action_goal.heading_pt.y     = head_pt[1]
+            action_goal.heading_pt.theta = th_d
+            self.ClientGTP.send_goal(action_goal)
             rate.sleep()
 
 if __name__ == '__main__':
