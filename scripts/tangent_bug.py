@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
+
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, Point
 from std_msgs.msg import Float32
@@ -8,25 +10,25 @@ from numpy import sin, cos, pi
 from numpy.linalg import norm
 from learn_ros.msg import GoToPointAction, GoToPointGoal 
 
-import transformations as tf
+import tf.transformations as tfs
 import numpy as np
 
-import matplotlib
 import rospy
 import actionlib
 
-from __future__ import print_function
-
+import matplotlib.pyplot as plt
+plt.ion()
+plt.show()
 
 class TangentBug:
     angles = None
-    ranges = None
+    ranges = None # numpy.ndarray (#pts, 2) pts w.r.t. map
     angle_min = None
     angle_max = None
     angle_inc = None
     range_max = None
     
-    robot_r = 0.21
+    robot_r = 0.3
     
     q    = None # [x, y] numpy.array
     th   = None # theta scalar
@@ -37,28 +39,39 @@ class TangentBug:
     goal_topic_name = "/robot0/goal"
     
     last_ls_msg = LaserScan()
+
     
     def __init__(self):
+        rospy.loginfo("Initializing a Tangent Bug")
         # Subscribers
-        rospy.Subscriber(  self.ls_topic_name, LaserScan,   self.lsCB)
+        rospy.Subscriber(self.ls_topic_name  , LaserScan, self.lsCB  )
+        rospy.loginfo("subscribed to %s", self.ls_topic_name)
         rospy.Subscriber(self.odom_topic_name,  Odometry, self.odomCB)
+        rospy.loginfo("subscribed to %s", self.odom_topic_name)
         rospy.Subscriber(self.goal_topic_name,     Point, self.goalCB)
+        rospy.loginfo("subscribed to %s", self.goal_topic_name)
         # Set some initial values
         rospy.loginfo("Waiting for laserscan msg to arrive")
         rospy.wait_for_message(  self.ls_topic_name, LaserScan)
         rospy.loginfo("Waiting for odometry  msg to arrive")
         rospy.wait_for_message(self.odom_topic_name,  Odometry)
+        rospy.loginfo("Done receiving the first msgs")
         self.angle_min = self.last_ls_msg.angle_min
         self.angle_max = self.last_ls_msg.angle_max
         self.angle_inc = self.last_ls_msg.angle_increment
         self.range_max = self.last_ls_msg.range_max
-        self.goal = np.copy(self.q)
+        self.goal      = np.copy(self.q)
+        """
+        @todo: angles should be inside lsCB
+        """
         self.angles    = np.linspace(self.angle_min, self.angle_max, 667) # the "667" from robot specification
-        
+
         # Action Client
-        self.ClientGTP = actionlib.SimpleActionClient('go_to_point', GoToPointAction)
-        self.ClientGTP.wait_for_server()
-        
+        """
+        @todo: Uncomment
+        #self.ClientGTP = actionlib.SimpleActionClient('go_to_point', GoToPointAction)
+        #self.ClientGTP.wait_for_server()
+        """
         rospy.loginfo("Tangent Bug Initialized")
         
     # LaserScan Callback
@@ -73,8 +86,8 @@ class TangentBug:
         if self.angles is not None:
             ranges_np   = self.laserscan_to_numpy(msg)
             idx         = np.where(ranges_np != np.inf)[0] # the index zero is becasue np.where returns a tuple (.,)
-            self.ranges = self.transform_range_stor(ranges_np[idx], self.angles[idx])
-            self.ranges = self.transform_range_rtow(self.ranges)
+            ranges_ = self.transform_range_stor(ranges_np[idx], self.angles[idx])
+            self.ranges = self.transform_range_rtow(ranges_)
     def odomCB(self, msg):
         """
         Get the new robot position and angles
@@ -82,7 +95,7 @@ class TangentBug:
         self.q  = np.array([msg.pose.pose.position.x, 
                             msg.pose.pose.position.y])
         
-        self.th = tf.euler_from_quaternion([msg.pose.pose.orientation.x,
+        self.th = tfs.euler_from_quaternion([msg.pose.pose.orientation.x,
                                             msg.pose.pose.orientation.y, 
                                             msg.pose.pose.orientation.z, 
                                             msg.pose.pose.orientation.w])[-1] # only z component
@@ -116,7 +129,7 @@ class TangentBug:
         T = self.Twr(self.th, self.q)
         vals_wrt_world = map(lambda pt: list(np.dot(T, [pt[0], pt[1], 1])), data)
         return np.array(vals_wrt_world)[:, :-1] # the last column is all 1's
-    def get_heading_pt(self, step_size=0.01, T_inf=True):
+    def get_heading_pt(self, step_size=0.005, T_inf=True):
         """
         @param step_size
         @type  scalar
@@ -127,28 +140,33 @@ class TangentBug:
         """
         x         = np.copy(self.q)
         goal      = self.goal
-        pts       = self.ranges       
+        pts       = np.copy(self.ranges)
         range_max = self.range_max
-        pt        = x
+        pt        = np.copy(x)
         direction = (goal - x) / norm(goal - x)
         dx        = direction * step_size
         num_steps = int(range_max / step_size)
         for i in range(num_steps):
+            if self.check_colision(pt, goal) == True:
+                return goal
             if self.check_colision(pt, pts) == True:
                 if T_inf == True:
                     return np.array([np.inf, np.inf])
+                pt = pt - self.robot_r * (pt - x) / norm(pt - x)
                 return pt
+            
             pt += dx
         return pt
     #TODO change name to get_endpts
-    def get_endpoints(self):
+    def get_endpoints(self, eps=0.35):
         """
+        @todo: eps comments
         @return the [x, y] of each endpoints
         @rtype  numpy.array (# endpoints, 2)
         """
         Z = self.laserscan_to_numpy(self.last_ls_msg)
         Z[Z == np.inf] = 100 # Could be any number which is bigger than self.range_max
-        Oindx = np.where(np.abs(np.diff(Z)) > 0.3)[0] # Z[n + 1] - Z[n]
+        Oindx = np.where(np.abs(np.diff(Z)) > eps)[0] # Z[n + 1] - Z[n]
         Os     = []
         Angles = []
         for O in Oindx:
@@ -237,7 +255,7 @@ class TangentBug:
         @return 2x2 rotation matrix about the z axis
         @rtype  numpy.ndarray
         """
-        return tf.euler_matrix(0, 0, angle)[:2, :2]
+        return tfs.euler_matrix(0, 0, angle)[:2, :2]
     @staticmethod
     def Twr(angle, q):
         """
@@ -249,8 +267,8 @@ class TangentBug:
         @return 3x3 homogeneous transformation matrix
         @rtype  numpy.ndarray
         """
-        T         = np.dot(tf.translation_matrix([q[0], q[1], 0.]), tf.euler_matrix(0, 0, angle))[:3, :3]
-        T[:2, -1] = np.dot(tf.translation_matrix([q[0], q[1], 0.]), tf.euler_matrix(0, 0, angle))[:2, -1]
+        T         = np.dot(tfs.translation_matrix([q[0], q[1], 0.]), tfs.euler_matrix(0, 0, angle))[:3, :3]
+        T[:2, -1] = np.dot(tfs.translation_matrix([q[0], q[1], 0.]), tfs.euler_matrix(0, 0, angle))[:2, -1]
         return T
     @staticmethod
     def get_pts(vals, idx, num_pts = 1):
@@ -291,10 +309,12 @@ class TangentBug:
         return np.arctan2(x[1], x[0])
     def impl(self):
         rate = rospy.Rate(50)
-        while True:
+        while True and not rospy.is_shutdown():
             action_goal = GoToPointGoal()
             goal = np.copy(self.goal)
             q    = np.copy(self.q)
+            if np.all(goal == q):
+                continue
             T  = self.get_heading_pt(T_inf=False)
             Oi = self.get_endpoints()
             Oi = self.discard_Oi(Oi)
@@ -302,12 +322,44 @@ class TangentBug:
             Oi = Oi - self.robot_r * (Oi - q) / norm(Oi - q, axis=1, keepdims=True)
             T_Oi = self.conca_pts(Oi, T)
             head_pt = self.get_pt_minimize(T_Oi)
+            if np.allclose(head_pt, q):
+                print("local minimum", head_pt)
+            """
+            @todo: Debugging v
+            """
+            self.plot_state(self.ranges, T_Oi, head_pt)
+            """
+            @todo: Debugging ^
+            """
             th_d = self.get_abs_angle_to_pt(head_pt)
             action_goal.heading_pt.x     = head_pt[0]
             action_goal.heading_pt.y     = head_pt[1]
             action_goal.heading_pt.theta = th_d
+            """
+            @todo: Uncomment
             self.ClientGTP.send_goal(action_goal)
+            """
             rate.sleep()
+    def plot_state(self, pts, e_pts, hd):
+        # Visualizes the state of the particle filter.
+        #
+        # Displays the particle cloud, mean position and landmarks. 
+        plt.clf()
+        plt.xlim((0, 15))
+        plt.ylim((0, 15))
+        plt.grid(which='both')
+        plt.scatter(pts[:, 0], pts[:, 1])
+        plt.scatter(e_pts[:, 0], e_pts[:, 1], marker='D')
+        plt.scatter(hd[0], hd[1], c='r')
+        plt.scatter(self.q[0], self.q[1], marker='x')
+        plt.scatter(self.goal[0], self.goal[1], marker='*')
+        plt.draw()
+        plt.pause(0.00000000001)
+        
+def main():
+    rospy.init_node("TangentBug")
+    bug = TangentBug()
+    bug.impl()
 
 if __name__ == '__main__':
-    pass
+    main()
