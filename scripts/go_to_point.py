@@ -34,7 +34,6 @@ class Go_To_Point:
                               msg.pose.pose.position.y])                           
     def pt_cb(self, goal):
         self.go_to_point(goal.heading_pt.x, goal.heading_pt.y, goal.heading_pt.theta)
-        print(self.pose[0], self.pose[1], self.th)
         
     def go_to_point(self, x, y, th, th_kp=.8, th_ki=.001, th_kd=0.0, d_kp = 0.2, eps=0.01):
         rospy.loginfo("Received New Desired Point x: %s, y: %s, theta: %s.", x, y, th)
@@ -46,7 +45,7 @@ class Go_To_Point:
         last_e = 0.
         rate = rospy.Rate(100)
         twist_msg = Twist()
-        while True:
+        while True and not rospy.is_shutdown():
             if self.ServerGTP.is_preempt_requested():
                 self.ServerGTP.set_preempted()
                 return
@@ -65,7 +64,7 @@ class Go_To_Point:
             ang_vel = th_kp * th_e + th_kd * e_dd + th_ki * TH_d
             ang_vel = np.clip(ang_vel, -1.4, 1.4)
             lin_vel = d_kp * d
-            lin_vel = np.clip(lin_vel, .025, 0.25)
+            lin_vel = np.clip(lin_vel, .05, 0.25)
             twist_msg.angular.z = ang_vel
             twist_msg.linear.x  = lin_vel
             self.TwistPub.publish(twist_msg)
@@ -78,7 +77,7 @@ class Go_To_Point:
     def go_to_angle(self, th_d, kp=1.5, eps=0.01):
         rate = rospy.Rate(100)
         twist_msg = Twist()
-        while True:
+        while True and not rospy.is_shutdown():
             if self.ServerGTP.is_preempt_requested():
                 self.ServerGTP.set_preempted()
                 break
