@@ -17,6 +17,7 @@ import rospy
 import actionlib
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import closeto
 plt.ion()
 plt.show()
 
@@ -72,6 +73,9 @@ class TangentBug:
         #self.ClientGTP = actionlib.SimpleActionClient('go_to_point', GoToPointAction)
         #self.ClientGTP.wait_for_server()
         """
+        self.ClientGTP = actionlib.SimpleActionClient('go_to_point', GoToPointAction)
+        rospy.loginfo("Waiting for an action server")
+        self.ClientGTP.wait_for_server()
         rospy.loginfo("Tangent Bug Initialized")
         
     # LaserScan Callback
@@ -279,11 +283,11 @@ class TangentBug:
         @type   int
         @param  num_pts number of points to return the value around idx
         @type   int
-        @return [x, y] coordinates of the points within idx - num_pts and idx + num_pts + 1
+        @return [x, y] coordinates of the points within idx - num_pts and idx + num_pts
         @rtype  numpy.ndarray
         """
         lower_bound = 0              if (idx - num_pts) < 0                   else (idx - num_pts) 
-        upper_bound = vals.shape[-1] if (idx + num_pts + 1) >= vals.shape[-1] else (idx + num_pts + 1)
+        upper_bound = vals.shape[-1] if (idx + num_pts + 1) >= vals.shape[0] else (idx + num_pts + 1)
         pts = vals[lower_bound:upper_bound, :]
         return pts
     @staticmethod
@@ -308,6 +312,7 @@ class TangentBug:
         x = x1 - self.q
         return np.arctan2(x[1], x[0])
     def impl(self):
+        robot_state = "Go_To_Goal"#
         rate = rospy.Rate(50)
         while True and not rospy.is_shutdown():
             action_goal = GoToPointGoal()
@@ -322,8 +327,14 @@ class TangentBug:
             Oi = Oi - self.robot_r * (Oi - q) / norm(Oi - q, axis=1, keepdims=True)
             T_Oi = self.conca_pts(Oi, T)
             head_pt = self.get_pt_minimize(T_Oi)
-            if np.allclose(head_pt, q):
+            if norm(head_pt - q) <= 0.02:
                 print("local minimum", head_pt)
+                closest_pt_idx = np.argmin(norm(self.ranges - self.q, axis=1))
+                closest_pt     = self.ranges[closest_pt_idx]
+                print(self.get_pts(self.ranges, closest_pt_idx))
+                normal_vec     = self.get_normal(self.get_pts(self.ranges, closest_pt_idx))
+                plt.quiver(closest_pt[0], closest_pt[1], normal_vec[0], normal_vec[1])
+                #return
             """
             @todo: Debugging v
             """
@@ -336,9 +347,9 @@ class TangentBug:
             action_goal.heading_pt.y     = head_pt[1]
             action_goal.heading_pt.theta = th_d
             """
-            @todo: Uncomment
-            self.ClientGTP.send_goal(action_goal)
+            @todo: Uncomment self.ClientGTP.send_goal(action_goal)
             """
+            #self.ClientGTP.send_goal(action_goal)
             rate.sleep()
     def plot_state(self, pts, e_pts, hd):
         # Visualizes the state of the particle filter.
@@ -353,6 +364,8 @@ class TangentBug:
         plt.scatter(hd[0], hd[1], c='r')
         plt.scatter(self.q[0], self.q[1], marker='x')
         plt.scatter(self.goal[0], self.goal[1], marker='*')
+        #plt.scatter(closest_pt[0], closest_pt[1])
+        
         plt.draw()
         plt.pause(0.00000000001)
         
