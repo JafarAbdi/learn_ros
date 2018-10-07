@@ -18,6 +18,8 @@ import actionlib
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import closeto
+from mercurial.revset import follow
+from matplotlib.pyplot import axis
 plt.ion()
 plt.show()
 
@@ -29,7 +31,7 @@ class TangentBug:
     angle_inc = None
     range_max = None
     
-    robot_r = 0.3
+    robot_r = 0.75 # Experimental value
     
     q    = None # [x, y] numpy.array
     th   = None # theta scalar
@@ -78,6 +80,9 @@ class TangentBug:
         self.ClientGTP.wait_for_server()
         rospy.loginfo("Tangent Bug Initialized")
         
+        rospy.loginfo("Waiting to receive a goal")
+        rospy.wait_for_message(self.goal_topic_name,  Point)
+        rospy.loginfo("Recived a goal")
     # LaserScan Callback
     def lsCB(self, msg):
         """
@@ -192,6 +197,7 @@ class TangentBug:
     @staticmethod
     def get_normal(pts):
         """
+        @deprecated: 
         @param pts: points to calculate normal to their least sqaure error minimizer line
         @type numpy.ndarray
         @return the coefficient of line b + a * x (a = coef[1], b = coef[0])
@@ -210,6 +216,23 @@ class TangentBug:
         np.dot(tangentVec, norm) == 0
         """
         return norm
+    @staticmethod
+    def get_pts(vals, idx, num_pts = 1):
+        """
+        @deprecated: 
+        @param  vals [x, y] coordinates of the sensor
+        @type   numpy.ndarray
+        @param  idx index of the points to return the symmetric points(num_pts) around it
+        @type   int
+        @param  num_pts number of points to return the value around idx
+        @type   int
+        @return [x, y] coordinates of the points within idx - num_pts and idx + num_pts
+        @rtype  numpy.ndarray
+        """
+        lower_bound = 0              if (idx - num_pts) < 0                   else (idx - num_pts) 
+        upper_bound = vals.shape[-1] if (idx + num_pts + 1) >= vals.shape[0] else (idx + num_pts + 1)
+        pts = vals[lower_bound:upper_bound, :]
+        return pts
     @staticmethod
     def h_fn(x, goal, pts):
         """
@@ -274,22 +297,7 @@ class TangentBug:
         T         = np.dot(tfs.translation_matrix([q[0], q[1], 0.]), tfs.euler_matrix(0, 0, angle))[:3, :3]
         T[:2, -1] = np.dot(tfs.translation_matrix([q[0], q[1], 0.]), tfs.euler_matrix(0, 0, angle))[:2, -1]
         return T
-    @staticmethod
-    def get_pts(vals, idx, num_pts = 1):
-        """
-        @param  vals [x, y] coordinates of the sensor
-        @type   numpy.ndarray
-        @param  idx index of the points to return the symmetric points(num_pts) around it
-        @type   int
-        @param  num_pts number of points to return the value around idx
-        @type   int
-        @return [x, y] coordinates of the points within idx - num_pts and idx + num_pts
-        @rtype  numpy.ndarray
-        """
-        lower_bound = 0              if (idx - num_pts) < 0                   else (idx - num_pts) 
-        upper_bound = vals.shape[-1] if (idx + num_pts + 1) >= vals.shape[0] else (idx + num_pts + 1)
-        pts = vals[lower_bound:upper_bound, :]
-        return pts
+   
     @staticmethod
     def conca_pts(Os, T):
         """
@@ -312,14 +320,14 @@ class TangentBug:
         x = x1 - self.q
         return np.arctan2(x[1], x[0])
     def impl(self):
-        robot_state = "Go_To_Goal"#
+        robot_state = "GTG"# Go_To_Goal"FB"
         rate = rospy.Rate(50)
         while True and not rospy.is_shutdown():
             action_goal = GoToPointGoal()
             goal = np.copy(self.goal)
             q    = np.copy(self.q)
-            if np.all(goal == q):
-                continue
+            if np.allclose(goal, q):
+                return
             T  = self.get_heading_pt(T_inf=False)
             Oi = self.get_endpoints()
             Oi = self.discard_Oi(Oi)
@@ -328,13 +336,17 @@ class TangentBug:
             T_Oi = self.conca_pts(Oi, T)
             head_pt = self.get_pt_minimize(T_Oi)
             if norm(head_pt - q) <= 0.02:
-                print("local minimum", head_pt)
-                closest_pt_idx = np.argmin(norm(self.ranges - self.q, axis=1))
-                closest_pt     = self.ranges[closest_pt_idx]
-                print(self.get_pts(self.ranges, closest_pt_idx))
-                normal_vec     = self.get_normal(self.get_pts(self.ranges, closest_pt_idx))
-                plt.quiver(closest_pt[0], closest_pt[1], normal_vec[0], normal_vec[1])
-                #return
+                robot_state = "FB"
+            if robot_state == "FB":
+                d_reach  = norm(self.get_heading_pt() - self.goal)
+                d_follow = np.min(norm(self.goal - self.ranges, axis=1))
+                if d_follow > d_reach:
+                    robot_state = "GTG"
+                else:
+                    closest_pt_idx = np.argmin(norm(self.ranges - self.q, axis=1))
+                    closest_pt     = self.ranges[closest_pt_idx]
+                    follow_dir     = np.dot(self.Rz(np.pi / 2), (self.q - closest_pt) / norm(closest_pt - self.q))
+                    head_pt += 0.25 * follow_dir
             """
             @todo: Debugging v
             """
@@ -349,7 +361,7 @@ class TangentBug:
             """
             @todo: Uncomment self.ClientGTP.send_goal(action_goal)
             """
-            #self.ClientGTP.send_goal(action_goal)
+            self.ClientGTP.send_goal(action_goal)
             rate.sleep()
     def plot_state(self, pts, e_pts, hd):
         # Visualizes the state of the particle filter.
@@ -365,6 +377,11 @@ class TangentBug:
         plt.scatter(self.q[0], self.q[1], marker='x')
         plt.scatter(self.goal[0], self.goal[1], marker='*')
         #plt.scatter(closest_pt[0], closest_pt[1])
+        closest_pt_idx = np.argmin(norm(self.ranges - self.q, axis=1))
+        closest_pt     = self.ranges[closest_pt_idx]
+        follow_dir     = np.dot(self.Rz(np.pi / 2), (self.q - closest_pt) / norm(closest_pt - self.q))
+        plt.quiver(closest_pt[0], closest_pt[1], follow_dir[0], follow_dir[1])     
+        #plt.quiver(closest_pt[0], closest_pt[1], normal_vec[0], normal_vec[1])     
         
         plt.draw()
         plt.pause(0.00000000001)
