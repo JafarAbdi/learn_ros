@@ -31,7 +31,8 @@ class TangentBug:
     angle_inc = None
     range_max = None
     
-    robot_r = 0.75 # Experimental value
+    robot_r = 0.75 #Experimental value
+    critical_dis = 0.2 + 0.2 # robot radius
     
     q    = None # [x, y] numpy.array
     th   = None # theta scalar
@@ -320,7 +321,7 @@ class TangentBug:
         x = x1 - self.q
         return np.arctan2(x[1], x[0])
     def impl(self):
-        robot_state = "GTG"# Go_To_Goal"FB"
+        robot_state = "GTG"# Go_To_Goal
         rate = rospy.Rate(50)
         while True and not rospy.is_shutdown():
             action_goal = GoToPointGoal()
@@ -335,18 +336,26 @@ class TangentBug:
             Oi = Oi - self.robot_r * (Oi - q) / norm(Oi - q, axis=1, keepdims=True)
             T_Oi = self.conca_pts(Oi, T)
             head_pt = self.get_pt_minimize(T_Oi)
+            closest_pt_idx = np.argmin(norm(self.ranges - q, axis=1))
+            closest_pt     = self.ranges[closest_pt_idx]
+            if norm(closest_pt - q) < self.critical_dis:
+                robot_state = "AO"
             if norm(head_pt - q) <= 0.02:
-                robot_state = "FB"
+                robot_state = "FB" # Follow boundary
+            if robot_state == "AO": # Avoid obstacles
+                moving_dir = (q - closest_pt) / norm(closest_pt - q)
+                head_pt    = q + 0.25 * moving_dir
+                if norm(closest_pt - q) > self.critical_dis:
+                    robot_state = "GTG"
             if robot_state == "FB":
                 d_reach  = norm(self.get_heading_pt() - self.goal)
                 d_follow = np.min(norm(self.goal - self.ranges, axis=1))
                 if d_follow > d_reach:
                     robot_state = "GTG"
                 else:
-                    closest_pt_idx = np.argmin(norm(self.ranges - self.q, axis=1))
-                    closest_pt     = self.ranges[closest_pt_idx]
-                    follow_dir     = np.dot(self.Rz(np.pi / 2), (self.q - closest_pt) / norm(closest_pt - self.q))
+                    follow_dir     = np.dot(self.Rz(np.pi / 2), (q - closest_pt) / norm(closest_pt - q))
                     head_pt += 0.25 * follow_dir
+            
             """
             @todo: Debugging v
             """
@@ -358,9 +367,7 @@ class TangentBug:
             action_goal.heading_pt.x     = head_pt[0]
             action_goal.heading_pt.y     = head_pt[1]
             action_goal.heading_pt.theta = th_d
-            """
-            @todo: Uncomment self.ClientGTP.send_goal(action_goal)
-            """
+
             self.ClientGTP.send_goal(action_goal)
             rate.sleep()
     def plot_state(self, pts, e_pts, hd):
